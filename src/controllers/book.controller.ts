@@ -5,59 +5,52 @@ import User from "../models/user.model";
 import mongoose from "mongoose";
 import { IBook } from "../types/interfaces/book.interface";
 import { CustomRequest } from "../types/interfaces/custom-request.interface";
-import { IReview } from "../types/interfaces/review.interface";
+import { IReview, IReviewData } from "../types/interfaces/review.interface";
 export const getBooks = async (
   req: CustomRequest,
   res: Response
 ): Promise<void> => {
   try {
-    const {
-      page = 1,
-      limit = 10,
-      sort = 'title',
-      order = 'asc',
-      title,
-      author,
-      genre,
-      status,
-    } = req.query;
+    const { page = 1, limit = 10, search, status } = req.query;
     const userId = req.user?._id;
 
-    // Validate and sanitize the query parameters
     const pageNumber = parseInt(page as string, 10);
     const limitNumber = parseInt(limit as string, 10);
-    if (isNaN(pageNumber) || isNaN(limitNumber) || pageNumber < 1 || limitNumber < 1) {
-      res.status(400).json({ error: 'Invalid pagination parameters' });
+    if (
+      isNaN(pageNumber) ||
+      isNaN(limitNumber) ||
+      pageNumber < 1 ||
+      limitNumber < 1
+    ) {
+      res.status(400).json({ error: "Invalid pagination parameters" });
       return;
     }
 
     const query: any = {};
-    if (title && typeof title === 'string') {
-      query.title = { $regex: title, $options: 'i' };
-    }
-    if (author && typeof author === 'string') {
-      query.author = { $regex: author, $options: 'i' };
-    }
-    if (genre && typeof genre === 'string') {
-      query.genre = { $regex: genre, $options: 'i' };
+    if (search && typeof search === "string") {
+      query.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { author: { $regex: search, $options: "i" } },
+        { genre: { $regex: search, $options: "i" } },
+      ];
     }
 
-    if (status === 'FAV') {
+    if (status === "FAV") {
       if (!userId) {
-        res.status(401).json({ error: 'Unauthorized' });
+        res.status(401).json({ error: "Unauthorized" });
         return;
       }
 
       const user = await User.findById(userId);
       if (!user) {
-        res.status(404).json({ error: 'User not found' });
+        res.status(404).json({ error: "User not found" });
         return;
       }
       query._id = { $in: user.favorites };
     }
 
     const books: IBook[] = await Book.find(query)
-      // .sort({ [sort as string]: order })
+      .select("title author genre coverImage averageRating")
       .skip((pageNumber - 1) * limitNumber)
       .limit(limitNumber);
 
@@ -82,8 +75,8 @@ export const getBooks = async (
 
     res.json(updatedBooks);
   } catch (error) {
-    console.error('Error getting books:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("Error getting books:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
 
@@ -95,17 +88,27 @@ export const getBookById = async (
     const { id } = req.params;
     const userId = req.user?._id;
 
-    // Validate the book ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
-      res.status(400).json({ error: 'Invalid book ID' });
+      res.status(400).json({ error: "Invalid book ID" });
       return;
     }
 
-    const book: IBook | null = await Book.findById(id).populate('reviews');
+    const book: IBook | null = await Book.findById(id).populate("reviews");
     if (!book) {
-      res.status(404).json({ error: 'Book not found' });
+      res.status(404).json({ error: "Book not found" });
       return;
     }
+
+    const reviews = book.reviews?.map((review) => ({
+      ...review.toObject(),
+      isAuthorizedUser: review.userId.toString() === userId?.toString(),
+    }));
+
+    reviews?.sort((a, b) => {
+      if (a.isAuthorizedUser && !b.isAuthorizedUser) return -1;
+      if (!a.isAuthorizedUser && b.isAuthorizedUser) return 1;
+      return 0;
+    });
 
     const isFavorite = userId
       ? (await User.findById(userId))?.favorites.some(
@@ -113,19 +116,17 @@ export const getBookById = async (
         ) || false
       : false;
 
-    res.json({ ...book.toObject(), isFavorite });
+    res.json({ ...book.toObject(), reviews, isFavorite });
   } catch (error) {
-    console.error('Error getting book:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("Error getting book:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
-
 export const createBooks = async (
   req: CustomRequest,
   res: Response
 ): Promise<void> => {
   try {
-    // Check if the user is authenticated and has admin privileges
     if (!req.user) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -133,7 +134,6 @@ export const createBooks = async (
 
     const booksData: IBook[] = req.body;
 
-    // Validate the request body
     if (!Array.isArray(booksData) || booksData.length === 0) {
       res.status(400).json({ error: "Invalid books data" });
       return;
@@ -146,7 +146,7 @@ export const createBooks = async (
         description: bookData.description,
         genre: bookData.genre,
         coverImage: bookData.coverImage,
-        averageRating:bookData.averageRating,
+        averageRating: bookData.averageRating,
       });
     });
 
@@ -172,7 +172,6 @@ export const toggleFavorite = async (
       return;
     }
 
-    // Validate the book ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       res.status(400).json({ error: "Invalid book ID" });
       return;
@@ -226,19 +225,16 @@ export const createReview = async (
     const { rating, comment } = req.body;
     const userId = req.user?._id;
     const username = req.user?.username;
-      console.log(userId);
+
     if (!userId || !username) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
 
-    // Validate the book ID
     if (!mongoose.Types.ObjectId.isValid(id)) {
       res.status(400).json({ error: "Invalid book ID" });
       return;
     }
-
-    // Validate the rating
     if (!rating || typeof rating !== "number" || rating < 1 || rating > 5) {
       res.status(400).json({ error: "Invalid rating" });
       return;
@@ -250,18 +246,19 @@ export const createReview = async (
       return;
     }
 
-    const newReview: IReview = {
-      _id: new mongoose.Types.ObjectId().toHexString(),
+    const newReview: IReviewData = {
       userId,
       username,
       rating,
       comment,
+      isAuthorizedUser: true,
     };
 
-    book.reviews?.push(newReview);
-    book.averageRating =
+    book.reviews?.push(newReview as IReview);
+    book.averageRating = Math.floor(
       book.reviews?.reduce((sum, review) => sum + review.rating, 0) /
-      (book.reviews?.length || 1);
+        (book.reviews?.length || 1)
+    );
 
     await book.save();
 
@@ -286,13 +283,14 @@ export const updateReview = async (
       return;
     }
 
-    // Validate the book ID and review ID
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(reviewId)) {
+    if (
+      !mongoose.Types.ObjectId.isValid(id) ||
+      !mongoose.Types.ObjectId.isValid(reviewId)
+    ) {
       res.status(400).json({ error: "Invalid book ID or review ID" });
       return;
     }
 
-    // Validate the rating
     if (rating && (typeof rating !== "number" || rating < 1 || rating > 5)) {
       res.status(400).json({ error: "Invalid rating" });
       return;
@@ -349,8 +347,10 @@ export const deleteReview = async (
       return;
     }
 
-    // Validate the book ID and review ID
-    if (!mongoose.Types.ObjectId.isValid(id) || !mongoose.Types.ObjectId.isValid(reviewId)) {
+    if (
+      !mongoose.Types.ObjectId.isValid(id) ||
+      !mongoose.Types.ObjectId.isValid(reviewId)
+    ) {
       res.status(400).json({ error: "Invalid book ID or review ID" });
       return;
     }
@@ -383,7 +383,7 @@ export const deleteReview = async (
 
     await book.save();
 
-    res.sendStatus(204);
+    res.json({ message: "Review deleted successfully" });
   } catch (error) {
     console.error("Error deleting review:", error);
     res.status(500).json({ error: "Internal server error" });

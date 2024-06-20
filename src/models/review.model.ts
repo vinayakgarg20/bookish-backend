@@ -6,6 +6,7 @@ export const reviewSchema: Schema = new Schema({
   username: { type: String, required: true },
   rating: { type: Number, required: true },
   comment: { type: String },
+  isAuthorizedUser: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
 });
 

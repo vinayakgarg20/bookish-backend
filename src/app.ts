@@ -4,9 +4,15 @@ import authRoutes from "./routes/auth.routes";
 import bookRoutes from "./routes/book.routes";
 import mongoose from "mongoose";
 import config from "./types/config/config";
+import cors from 'cors';
 
 const app = express();
-
+const corsOptions = {
+  origin: 'http://localhost:3000', // Replace with the origin of your frontend application
+  credentials: true, 
+  optionsSuccessStatus: 200, 
+};
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/books", bookRoutes);
